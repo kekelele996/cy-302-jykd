@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"math/rand"
 	"sort"
@@ -18,18 +17,23 @@ import (
 )
 
 // AttemptService handles taking, submitting and grading exams.
+// Every paper read goes through the PaperVersion snapshot bound to the attempt,
+// so question bank edits/withdrawals never change what an in-progress or
+// historical exam displays, grades against or reports.
 type AttemptService struct {
 	baseService
-	examRepo    ExamRepo
+	examRepo     ExamRepo
+	paperRepo    PaperRepo
 	questionRepo QuestionRepo
-	attemptRepo AttemptRepo
-	answerRepo  AnswerRepo
-	wrongRepo   WrongRepo
+	attemptRepo  AttemptRepo
+	answerRepo   AnswerRepo
+	wrongRepo    WrongRepo
 }
 
 // NewAttemptService constructs AttemptService.
 func NewAttemptService(
 	examRepo ExamRepo,
+	paperRepo PaperRepo,
 	questionRepo QuestionRepo,
 	attemptRepo AttemptRepo,
 	answerRepo AnswerRepo,
@@ -39,6 +43,7 @@ func NewAttemptService(
 	return &AttemptService{
 		baseService:  NewBaseService(logger),
 		examRepo:     examRepo,
+		paperRepo:    paperRepo,
 		questionRepo: questionRepo,
 		attemptRepo:  attemptRepo,
 		answerRepo:   answerRepo,
@@ -47,6 +52,8 @@ func NewAttemptService(
 }
 
 // Start creates or resumes a student attempt with a shuffled paper.
+// New attempts bind to the exam's current frozen version; resumed attempts keep
+// the version they originally started with, even if a newer version exists.
 func (s *AttemptService) Start(ctx context.Context, studentID, examID uint) (*dto.AttemptStartResponse, error) {
 	exam, err := s.examRepo.FindExamByID(ctx, examID)
 	if err != nil {
@@ -57,24 +64,29 @@ func (s *AttemptService) Start(ctx context.Context, studentID, examID uint) (*dt
 	}
 	now := time.Now()
 	if exam.StartTime != nil && now.Before(*exam.StartTime) {
-		return nil, fmt.Errorf("%w: 考试尚未开始", ErrValidation)
+		return nil, errWrapf("%w: 考试尚未开始", ErrValidation)
 	}
 	if exam.EndTime != nil && now.After(*exam.EndTime) {
-		return nil, fmt.Errorf("%w: 考试已结束", ErrValidation)
+		return nil, errWrapf("%w: 考试已结束", ErrValidation)
 	}
 
 	if existing, err := s.attemptRepo.FindInProgressAttempt(ctx, examID, studentID); err == nil {
 		return s.startResponse(ctx, existing, exam)
 	} else if !errors.Is(err, repository.ErrNotFound) {
-		return nil, fmt.Errorf("find in progress attempt: %w", err)
+		return nil, errWrap("find in progress attempt", err)
 	}
 
-	items, err := s.examRepo.ListExamQuestions(ctx, examID)
+	// Resolve and lock the frozen version the attempt will be bound to.
+	version, err := s.paperRepo.FindCurrentPaperVersion(ctx, examID)
+	if err != nil {
+		return nil, errWrap("resolve current paper version", err)
+	}
+	items, err := s.paperRepo.ListPaperVersionQuestions(ctx, version.ID)
 	if err != nil {
 		return nil, err
 	}
 	if len(items) == 0 {
-		return nil, fmt.Errorf("%w: 试卷没有题目", ErrValidation)
+		return nil, errWrapf("%w: 试卷没有题目", ErrValidation)
 	}
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	shuffle(items, rng)
@@ -83,12 +95,8 @@ func (s *AttemptService) Start(ctx context.Context, studentID, examID uint) (*dt
 	optionOrder := map[uint][]string{}
 	for _, it := range items {
 		order = append(order, it.ID)
-		q, ok := s.findQuestion(ctx, it.QuestionID)
-		if !ok {
-			continue
-		}
-		if isChoiceType(q.Type) {
-			options, _ := unmarshalOptions(q.Options)
+		if isChoiceType(it.Type) {
+			options, _ := unmarshalOptions(it.Options)
 			shuffle(options, rng)
 			keys := make([]string, 0, len(options))
 			for _, opt := range options {
@@ -101,13 +109,14 @@ func (s *AttemptService) Start(ctx context.Context, studentID, examID uint) (*dt
 	orderRaw, _ := json.Marshal(order)
 	optionRaw, _ := json.Marshal(optionOrder)
 	attempt := &model.ExamAttempt{
-		ExamID:        examID,
-		StudentID:     studentID,
-		Status:        constants.AttemptInProgress,
-		StartedAt:     now,
-		Deadline:      now.Add(time.Duration(exam.DurationMinutes) * time.Minute),
-		QuestionOrder: string(orderRaw),
-		OptionOrder:   string(optionRaw),
+		ExamID:         examID,
+		PaperVersionID: version.ID,
+		StudentID:      studentID,
+		Status:         constants.AttemptInProgress,
+		StartedAt:      now,
+		Deadline:       now.Add(time.Duration(exam.DurationMinutes) * time.Minute),
+		QuestionOrder:  string(orderRaw),
+		OptionOrder:    string(optionRaw),
 	}
 	if err := s.attemptRepo.CreateAttempt(ctx, attempt); err != nil {
 		return nil, err
@@ -138,14 +147,17 @@ func (s *AttemptService) SaveAnswer(ctx context.Context, studentID, attemptID ui
 		return ErrForbidden
 	}
 	if attempt.Status != constants.AttemptInProgress {
-		return fmt.Errorf("%w: 试卷已提交，无法继续答题", ErrValidation)
+		return errWrapf("%w: 试卷已提交，无法继续答题", ErrValidation)
 	}
 	if time.Now().After(attempt.Deadline) {
-		return fmt.Errorf("%w: 考试时间已到，请交卷", ErrValidation)
+		return errWrapf("%w: 考试时间已到，请交卷", ErrValidation)
 	}
-	eq, ok := s.findExamQuestion(ctx, attempt, req.ExamQuestionID)
+	fq, ok, err := s.findVersionQuestion(ctx, attempt, req.ExamQuestionID)
+	if err != nil {
+		return err
+	}
 	if !ok {
-		return fmt.Errorf("%w: 题目不在当前试卷中", ErrValidation)
+		return errWrapf("%w: 题目不在当前试卷中", ErrValidation)
 	}
 	answerRaw, err := marshalAnswer(req.Answer)
 	if err != nil {
@@ -157,19 +169,21 @@ func (s *AttemptService) SaveAnswer(ctx context.Context, studentID, attemptID ui
 	}
 	answer := &model.Answer{
 		AttemptID:      attemptID,
-		ExamQuestionID: eq.ID,
-		QuestionID:     eq.QuestionID,
+		ExamQuestionID: fq.ID,
+		QuestionID:     fq.QuestionID,
 		AnswerText:     answerRaw,
 		Marked:         marked,
 		Score:          0,
 	}
 	if err := s.answerRepo.SaveAnswer(ctx, answer); err != nil {
-		return fmt.Errorf("save answer: %w", err)
+		return errWrap("save answer", err)
 	}
 	return nil
 }
 
-// Submit finalizes an attempt, auto-grades objective questions and collects wrong answers.
+// Submit finalizes an attempt, auto-grades objective questions and collects
+// wrong answers. Grading compares against the frozen reference answer captured
+// in the attempt's paper version.
 func (s *AttemptService) Submit(ctx context.Context, studentID, attemptID uint) error {
 	attempt, err := s.attemptRepo.FindAttemptByID(ctx, attemptID)
 	if err != nil {
@@ -182,7 +196,7 @@ func (s *AttemptService) Submit(ctx context.Context, studentID, attemptID uint) 
 		return ErrConflict
 	}
 
-	items, err := s.examRepo.ListExamQuestions(ctx, attempt.ExamID)
+	frozen, err := s.versionQuestions(ctx, attempt)
 	if err != nil {
 		return err
 	}
@@ -198,20 +212,17 @@ func (s *AttemptService) Submit(ctx context.Context, studentID, attemptID uint) 
 	objectiveTotal := 0.0
 	wrongItems := make([]*model.WrongQuestion, 0)
 	now := time.Now()
-	for _, it := range items {
-		q, ok := s.findQuestion(ctx, it.QuestionID)
-		if !ok {
-			continue
-		}
+	for i := range frozen {
+		it := &frozen[i]
 		studentAnswer := answerMap[it.ID]
-		correctAnswer, _ := unmarshalAnswer(q.Answer)
+		correctAnswer, _ := unmarshalAnswer(it.Answer)
 		studentRaw, _ := unmarshalAnswer(studentAnswer.AnswerText)
 
-		isObjective := ObjectiveQuestionTypes()[q.Type]
+		isObjective := ObjectiveQuestionTypes()[it.Type]
 		var isCorrect *bool
 		score := 0.0
 		if isObjective {
-			correct := studentAnswer.AnswerText != "" && isCorrectObjective(q.Type, correctAnswer, studentRaw)
+			correct := studentAnswer.AnswerText != "" && isCorrectObjective(it.Type, correctAnswer, studentRaw)
 			isCorrect = &correct
 			if correct {
 				score = it.Score
@@ -219,8 +230,8 @@ func (s *AttemptService) Submit(ctx context.Context, studentID, attemptID uint) 
 			} else {
 				wrongItems = append(wrongItems, &model.WrongQuestion{
 					StudentID:      studentID,
-					QuestionID:     q.ID,
-					KnowledgePoint: q.KnowledgePoint,
+					QuestionID:     it.QuestionID,
+					KnowledgePoint: it.KnowledgePoint,
 					WrongCount:     1,
 					LastWrongAt:    now,
 					Status:         constants.WrongUnresolved,
@@ -230,14 +241,14 @@ func (s *AttemptService) Submit(ctx context.Context, studentID, attemptID uint) 
 		saved := &model.Answer{
 			AttemptID:      attemptID,
 			ExamQuestionID: it.ID,
-			QuestionID:     q.ID,
+			QuestionID:     it.QuestionID,
 			AnswerText:     studentAnswer.AnswerText,
 			IsCorrect:      isCorrect,
 			Score:          score,
 			Marked:         studentAnswer.Marked,
 		}
 		if err := s.answerRepo.SaveAnswer(ctx, saved); err != nil {
-			return fmt.Errorf("save answer: %w", err)
+			return errWrap("save answer", err)
 		}
 	}
 
@@ -247,24 +258,25 @@ func (s *AttemptService) Submit(ctx context.Context, studentID, attemptID uint) 
 	attempt.ObjectiveScore = objectiveTotal
 	attempt.TotalScore = objectiveTotal
 	if err := s.attemptRepo.UpdateAttempt(ctx, attempt); err != nil {
-		return fmt.Errorf("update attempt: %w", err)
+		return errWrap("update attempt", err)
 	}
 	for _, w := range wrongItems {
 		if err := s.wrongRepo.UpsertWrongQuestion(ctx, w); err != nil {
-			return fmt.Errorf("upsert wrong question: %w", err)
+			return errWrap("upsert wrong question", err)
 		}
 	}
 	return nil
 }
 
-// Grade applies teacher scores to subjective answers.
+// Grade applies teacher scores to subjective answers. Score caps come from the
+// frozen per-question score captured in the attempt's version.
 func (s *AttemptService) Grade(ctx context.Context, teacherID uint, role string, attemptID uint, req dto.GradeRequest) error {
 	attempt, err := s.attemptRepo.FindAttemptByID(ctx, attemptID)
 	if err != nil {
 		return err
 	}
 	if attempt.Status != constants.AttemptSubmitted {
-		return fmt.Errorf("%w: 只有已提交的试卷可以批改", ErrValidation)
+		return errWrapf("%w: 只有已提交的试卷可以批改", ErrValidation)
 	}
 	exam, err := s.examRepo.FindExamByID(ctx, attempt.ExamID)
 	if err != nil {
@@ -274,13 +286,13 @@ func (s *AttemptService) Grade(ctx context.Context, teacherID uint, role string,
 		return ErrForbidden
 	}
 
-	items, err := s.examRepo.ListExamQuestions(ctx, attempt.ExamID)
+	frozen, err := s.versionQuestions(ctx, attempt)
 	if err != nil {
 		return err
 	}
-	questionMap := make(map[uint]model.ExamQuestion, len(items))
-	for _, it := range items {
-		questionMap[it.ID] = it
+	questionMap := make(map[uint]model.PaperVersionQuestion, len(frozen))
+	for i := range frozen {
+		questionMap[frozen[i].ID] = frozen[i]
 	}
 	answers, err := s.answerRepo.ListAnswersByAttempt(ctx, attemptID)
 	if err != nil {
@@ -292,46 +304,45 @@ func (s *AttemptService) Grade(ctx context.Context, teacherID uint, role string,
 	}
 
 	for _, item := range req.Items {
-		eq, ok := questionMap[item.ExamQuestionID]
+		fq, ok := questionMap[item.ExamQuestionID]
 		if !ok {
-			return fmt.Errorf("%w: 题目不在该试卷中", ErrValidation)
+			return errWrapf("%w: 题目不在该试卷中", ErrValidation)
 		}
-		q, ok := s.findQuestion(ctx, eq.QuestionID)
-		if !ok {
-			continue
-		}
-		if ObjectiveQuestionTypes()[q.Type] {
+		if ObjectiveQuestionTypes()[fq.Type] {
 			continue
 		}
 		answer, exists := answerMap[item.ExamQuestionID]
 		if !exists {
 			continue
 		}
-		if item.Score > eq.Score {
-			return fmt.Errorf("%w: 得分不能超过题目分值 %.2f", ErrValidation, eq.Score)
+		if item.Score > fq.Score {
+			return errWrapf("%w: 得分不能超过题目分值 %.2f", ErrValidation, fq.Score)
 		}
 		answer.Score = item.Score
 		answer.GradedBy = teacherID
 		if err := s.answerRepo.SaveAnswer(ctx, &answer); err != nil {
-			return fmt.Errorf("grade answer: %w", err)
+			return errWrap("grade answer", err)
 		}
 		answerMap[item.ExamQuestionID] = answer
 	}
 
 	total := attempt.ObjectiveScore
 	for _, a := range answerMap {
-		if _, isObjective := s.questionTypeByAnswer(ctx, a); !isObjective {
-			total += a.Score
+		if fq, ok := questionMap[a.ExamQuestionID]; ok {
+			if !ObjectiveQuestionTypes()[fq.Type] {
+				total += a.Score
+			}
 		}
 	}
 	attempt.TotalScore = total
 	if err := s.attemptRepo.UpdateAttempt(ctx, attempt); err != nil {
-		return fmt.Errorf("update attempt: %w", err)
+		return errWrap("update attempt", err)
 	}
 	return nil
 }
 
-// Detail returns the full review of an attempt.
+// Detail returns the full review of an attempt. Content, options, reference
+// answers and max scores all come from the version frozen at attempt start.
 func (s *AttemptService) Detail(ctx context.Context, role string, userID, attemptID uint) (*dto.AttemptDetail, error) {
 	attempt, err := s.attemptRepo.FindAttemptByID(ctx, attemptID)
 	if err != nil {
@@ -348,13 +359,15 @@ func (s *AttemptService) Detail(ctx context.Context, role string, userID, attemp
 		return nil, ErrForbidden
 	}
 
-	details, err := s.buildDetail(ctx, attempt, exam, role)
+	version, details, err := s.buildDetail(ctx, attempt, role)
 	if err != nil {
 		return nil, err
 	}
 	return &dto.AttemptDetail{
 		AttemptID:      attempt.ID,
 		ExamID:         exam.ID,
+		PaperVersionID: attempt.PaperVersionID,
+		VersionNo:      version.VersionNo,
 		ExamTitle:      exam.Title,
 		Status:         attempt.Status,
 		ObjectiveScore: attempt.ObjectiveScore,
@@ -370,7 +383,7 @@ func (s *AttemptService) Detail(ctx context.Context, role string, userID, attemp
 func (s *AttemptService) List(ctx context.Context, studentID uint, query dto.AttemptListQuery) (dto.PageResult, error) {
 	attempts, total, err := s.attemptRepo.ListAttemptsByStudent(ctx, studentID, query.ExamID, query.Page, query.PageSize)
 	if err != nil {
-		return dto.PageResult{}, fmt.Errorf("list attempts: %w", err)
+		return dto.PageResult{}, errWrap("list attempts", err)
 	}
 	page, pageSize := normalizePage(query.Page, query.PageSize)
 	items := make([]dto.AttemptSummary, 0, len(attempts))
@@ -380,9 +393,17 @@ func (s *AttemptService) List(ctx context.Context, studentID uint, query dto.Att
 		if examErr == nil {
 			title = exam.Title
 		}
+		versionNo := 0
+		if attempts[i].PaperVersionID != 0 {
+			if v, vErr := s.paperRepo.FindPaperVersionByID(ctx, attempts[i].PaperVersionID); vErr == nil {
+				versionNo = v.VersionNo
+			}
+		}
 		items = append(items, dto.AttemptSummary{
 			AttemptID:      attempts[i].ID,
 			ExamID:         attempts[i].ExamID,
+			PaperVersionID: attempts[i].PaperVersionID,
+			VersionNo:      versionNo,
 			ExamTitle:      title,
 			Status:         attempts[i].Status,
 			ObjectiveScore: attempts[i].ObjectiveScore,
@@ -394,7 +415,7 @@ func (s *AttemptService) List(ctx context.Context, studentID uint, query dto.Att
 	return dto.PageResult{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
 }
 
-// Report builds score analysis with ranking.
+// Report builds score analysis with ranking, based on the frozen version.
 func (s *AttemptService) Report(ctx context.Context, role string, userID, attemptID uint) (*dto.ReportResponse, error) {
 	attempt, err := s.attemptRepo.FindAttemptByID(ctx, attemptID)
 	if err != nil {
@@ -411,7 +432,7 @@ func (s *AttemptService) Report(ctx context.Context, role string, userID, attemp
 		return nil, ErrForbidden
 	}
 
-	items, err := s.examRepo.ListExamQuestions(ctx, attempt.ExamID)
+	frozen, err := s.versionQuestions(ctx, attempt)
 	if err != nil {
 		return nil, err
 	}
@@ -434,24 +455,21 @@ func (s *AttemptService) Report(ctx context.Context, role string, userID, attemp
 	objectiveCorrect := 0
 	objectiveCount := 0
 
-	for _, it := range items {
+	for i := range frozen {
+		it := &frozen[i]
 		a, ok := answerMap[it.ID]
 		if !ok {
 			continue
 		}
-		q, ok := s.findQuestion(ctx, it.QuestionID)
-		if !ok {
-			continue
-		}
-		entry, exists := aggMap[q.Type]
+		entry, exists := aggMap[it.Type]
 		if !exists {
-			entry = &agg{name: questionTypeName(q.Type)}
-			aggMap[q.Type] = entry
+			entry = &agg{name: questionTypeName(it.Type)}
+			aggMap[it.Type] = entry
 		}
 		entry.score += a.Score
 		entry.max += it.Score
 		entry.count++
-		if ObjectiveQuestionTypes()[q.Type] {
+		if ObjectiveQuestionTypes()[it.Type] {
 			objectiveCount++
 			if a.IsCorrect != nil && *a.IsCorrect {
 				objectiveCorrect++
@@ -485,10 +503,18 @@ func (s *AttemptService) Report(ctx context.Context, role string, userID, attemp
 	}
 	rank, participants := s.ranking(ctx, attempt)
 
+	versionNo := 0
+	if attempt.PaperVersionID != 0 {
+		if v, vErr := s.paperRepo.FindPaperVersionByID(ctx, attempt.PaperVersionID); vErr == nil {
+			versionNo = v.VersionNo
+		}
+	}
 	subjectiveScore := attempt.TotalScore - attempt.ObjectiveScore
 	return &dto.ReportResponse{
 		AttemptID:       attempt.ID,
 		ExamID:          exam.ID,
+		PaperVersionID:  attempt.PaperVersionID,
+		VersionNo:       versionNo,
 		ExamTitle:       exam.Title,
 		TotalScore:      attempt.TotalScore,
 		ObjectiveScore:  attempt.ObjectiveScore,
@@ -519,9 +545,17 @@ func (s *AttemptService) ListGrading(ctx context.Context, role string, userID, e
 		if attempts[i].Status != constants.AttemptSubmitted {
 			continue
 		}
+		versionNo := 0
+		if attempts[i].PaperVersionID != 0 {
+			if v, vErr := s.paperRepo.FindPaperVersionByID(ctx, attempts[i].PaperVersionID); vErr == nil {
+				versionNo = v.VersionNo
+			}
+		}
 		result = append(result, dto.AttemptSummary{
 			AttemptID:      attempts[i].ID,
 			ExamID:         attempts[i].ExamID,
+			PaperVersionID: attempts[i].PaperVersionID,
+			VersionNo:      versionNo,
 			ExamTitle:      exam.Title,
 			Status:         attempts[i].Status,
 			ObjectiveScore: attempts[i].ObjectiveScore,
@@ -533,32 +567,27 @@ func (s *AttemptService) ListGrading(ctx context.Context, role string, userID, e
 	return result, nil
 }
 
-func (s *AttemptService) buildDetail(ctx context.Context, attempt *model.ExamAttempt, exam *model.Exam, role string) ([]dto.AttemptQuestionDetail, error) {
-	items, err := s.examRepo.ListExamQuestions(ctx, attempt.ExamID)
+func (s *AttemptService) buildDetail(ctx context.Context, attempt *model.ExamAttempt, role string) (*model.PaperVersion, []dto.AttemptQuestionDetail, error) {
+	version, frozen, err := s.orderedVersionQuestions(ctx, attempt)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	answers, err := s.answerRepo.ListAnswersByAttempt(ctx, attempt.ID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	answerMap := make(map[uint]model.Answer, len(answers))
 	for _, a := range answers {
 		answerMap[a.ExamQuestionID] = a
 	}
-	order := parseOrder(attempt.QuestionOrder)
-	items = orderExamQuestions(items, order)
 
-	result := make([]dto.AttemptQuestionDetail, 0, len(items))
-	for _, it := range items {
-		q, ok := s.findQuestion(ctx, it.QuestionID)
-		if !ok {
-			continue
-		}
+	result := make([]dto.AttemptQuestionDetail, 0, len(frozen))
+	for i := range frozen {
+		it := &frozen[i]
 		a := answerMap[it.ID]
 		studentAnswer, _ := unmarshalAnswer(a.AnswerText)
-		correctAnswer, _ := unmarshalAnswer(q.Answer)
-		showCorrect := role == constants.RoleTeacher || role == constants.RoleAdmin || ObjectiveQuestionTypes()[q.Type]
+		correctAnswer, _ := unmarshalAnswer(it.Answer)
+		showCorrect := role == constants.RoleTeacher || role == constants.RoleAdmin || ObjectiveQuestionTypes()[it.Type]
 		if !showCorrect {
 			correctAnswer = nil
 		}
@@ -569,24 +598,24 @@ func (s *AttemptService) buildDetail(ctx context.Context, attempt *model.ExamAtt
 		}
 		result = append(result, dto.AttemptQuestionDetail{
 			ExamQuestionID: it.ID,
-			Type:           q.Type,
-			Content:        q.Content,
-			Options:        mustOptions(q.Options),
+			Type:           it.Type,
+			Content:        it.Content,
+			Options:        mustOptions(it.Options),
 			StudentAnswer:  studentAnswer,
 			CorrectAnswer:  correctAnswer,
 			IsCorrect:      isCorrect,
 			Score:          a.Score,
 			MaxScore:       it.Score,
-			Analysis:       q.Analysis,
+			Analysis:       it.Analysis,
 			Marked:         a.Marked,
 			Graded:         a.GradedBy != 0,
 		})
 	}
-	return result, nil
+	return version, result, nil
 }
 
 func (s *AttemptService) startResponse(ctx context.Context, attempt *model.ExamAttempt, exam *model.Exam) (*dto.AttemptStartResponse, error) {
-	items, err := s.examRepo.ListExamQuestions(ctx, attempt.ExamID)
+	version, items, err := s.orderedVersionQuestions(ctx, attempt)
 	if err != nil {
 		return nil, err
 	}
@@ -598,17 +627,12 @@ func (s *AttemptService) startResponse(ctx context.Context, attempt *model.ExamA
 	for _, a := range answers {
 		answerMap[a.ExamQuestionID] = a
 	}
-	order := parseOrder(attempt.QuestionOrder)
-	items = orderExamQuestions(items, order)
 	optionOrder := parseOptionOrder(attempt.OptionOrder)
 
 	views := make([]dto.ExamQuestionView, 0, len(items))
-	for _, it := range items {
-		q, ok := s.findQuestion(ctx, it.QuestionID)
-		if !ok {
-			continue
-		}
-		options, _ := unmarshalOptions(q.Options)
+	for i := range items {
+		it := &items[i]
+		options, _ := unmarshalOptions(it.Options)
 		if keys, ok := optionOrder[it.ID]; ok {
 			options = reorderOptions(options, keys)
 		}
@@ -616,8 +640,8 @@ func (s *AttemptService) startResponse(ctx context.Context, attempt *model.ExamA
 		studentAnswer, _ := unmarshalAnswer(a.AnswerText)
 		views = append(views, dto.ExamQuestionView{
 			ExamQuestionID: it.ID,
-			Type:           q.Type,
-			Content:        q.Content,
+			Type:           it.Type,
+			Content:        it.Content,
 			Options:        options,
 			Score:          it.Score,
 			Marked:         a.Marked,
@@ -627,43 +651,60 @@ func (s *AttemptService) startResponse(ctx context.Context, attempt *model.ExamA
 	return &dto.AttemptStartResponse{
 		AttemptID:       attempt.ID,
 		ExamID:          exam.ID,
+		PaperVersionID:  attempt.PaperVersionID,
+		VersionNo:       version.VersionNo,
 		Title:           exam.Title,
 		DurationMinutes: exam.DurationMinutes,
-		TotalScore:      exam.TotalScore,
+		TotalScore:      version.TotalScore,
 		StartedAt:       attempt.StartedAt,
 		Deadline:        attempt.Deadline,
 		Questions:       views,
 	}, nil
 }
 
-func (s *AttemptService) findQuestion(ctx context.Context, id uint) (model.Question, bool) {
-	m, err := s.questionRepo.FindQuestionsByIDs(ctx, []uint{id})
-	if err != nil {
-		return model.Question{}, false
+// versionQuestions loads the frozen questions bound to an attempt.
+func (s *AttemptService) versionQuestions(ctx context.Context, attempt *model.ExamAttempt) ([]model.PaperVersionQuestion, error) {
+	if attempt.PaperVersionID == 0 {
+		return nil, errWrapf("%w: 答题记录未绑定试卷版本", ErrNotFound)
 	}
-	q, ok := m[id]
-	return q, ok
+	items, err := s.paperRepo.ListPaperVersionQuestions(ctx, attempt.PaperVersionID)
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
-func (s *AttemptService) findExamQuestion(ctx context.Context, attempt *model.ExamAttempt, eqID uint) (model.ExamQuestion, bool) {
-	items, err := s.examRepo.ListExamQuestions(ctx, attempt.ExamID)
+// orderedVersionQuestions loads the bound version and its frozen questions in
+// the per-student shuffled order persisted on the attempt.
+func (s *AttemptService) orderedVersionQuestions(ctx context.Context, attempt *model.ExamAttempt) (*model.PaperVersion, []model.PaperVersionQuestion, error) {
+	if attempt.PaperVersionID == 0 {
+		return nil, nil, errWrapf("%w: 答题记录未绑定试卷版本", ErrNotFound)
+	}
+	version, err := s.paperRepo.FindPaperVersionByID(ctx, attempt.PaperVersionID)
 	if err != nil {
-		return model.ExamQuestion{}, false
+		return nil, nil, err
+	}
+	items, err := s.paperRepo.ListPaperVersionQuestions(ctx, attempt.PaperVersionID)
+	if err != nil {
+		return nil, nil, err
+	}
+	order := parseOrder(attempt.QuestionOrder)
+	items = orderVersionQuestions(items, order)
+	return version, items, nil
+}
+
+// findVersionQuestion returns one frozen question by its version-question id.
+func (s *AttemptService) findVersionQuestion(ctx context.Context, attempt *model.ExamAttempt, versionQuestionID uint) (model.PaperVersionQuestion, bool, error) {
+	items, err := s.versionQuestions(ctx, attempt)
+	if err != nil {
+		return model.PaperVersionQuestion{}, false, err
 	}
 	for _, it := range items {
-		if it.ID == eqID {
-			return it, true
+		if it.ID == versionQuestionID {
+			return it, true, nil
 		}
 	}
-	return model.ExamQuestion{}, false
-}
-
-func (s *AttemptService) questionTypeByAnswer(ctx context.Context, a model.Answer) (string, bool) {
-	q, ok := s.findQuestion(ctx, a.QuestionID)
-	if !ok {
-		return "", true
-	}
-	return q.Type, ObjectiveQuestionTypes()[q.Type]
+	return model.PaperVersionQuestion{}, false, nil
 }
 
 func (s *AttemptService) ranking(ctx context.Context, attempt *model.ExamAttempt) (int, int) {
@@ -703,15 +744,15 @@ func parseOptionOrder(raw string) map[uint][]string {
 	return result
 }
 
-func orderExamQuestions(items []model.ExamQuestion, order []uint) []model.ExamQuestion {
+func orderVersionQuestions(items []model.PaperVersionQuestion, order []uint) []model.PaperVersionQuestion {
 	if len(order) == 0 {
 		return items
 	}
-	byID := make(map[uint]model.ExamQuestion, len(items))
+	byID := make(map[uint]model.PaperVersionQuestion, len(items))
 	for _, it := range items {
 		byID[it.ID] = it
 	}
-	result := make([]model.ExamQuestion, 0, len(items))
+	result := make([]model.PaperVersionQuestion, 0, len(items))
 	for _, id := range order {
 		if it, ok := byID[id]; ok {
 			result = append(result, it)

@@ -6,6 +6,8 @@ import "time"
 type AttemptSummary struct {
 	AttemptID      uint       `json:"attempt_id"`
 	ExamID         uint       `json:"exam_id"`
+	PaperVersionID uint       `json:"paper_version_id"`
+	VersionNo      int        `json:"version_no"`
 	ExamTitle      string     `json:"exam_title"`
 	Status         string     `json:"status"`
 	ObjectiveScore float64    `json:"objective_score"`
@@ -34,6 +36,8 @@ type AttemptQuestionDetail struct {
 type AttemptDetail struct {
 	AttemptID      uint                     `json:"attempt_id"`
 	ExamID         uint                     `json:"exam_id"`
+	PaperVersionID uint                     `json:"paper_version_id"`
+	VersionNo      int                      `json:"version_no"`
 	ExamTitle      string                   `json:"exam_title"`
 	Status         string                   `json:"status"`
 	ObjectiveScore float64                  `json:"objective_score"`
@@ -55,17 +59,19 @@ type TypeScore struct {
 
 // ReportResponse is the score analysis shown after grading.
 type ReportResponse struct {
-	AttemptID      uint        `json:"attempt_id"`
-	ExamID         uint        `json:"exam_id"`
-	ExamTitle      string      `json:"exam_title"`
-	TotalScore     float64     `json:"total_score"`
-	ObjectiveScore float64     `json:"objective_score"`
-	SubjectiveScore float64    `json:"subjective_score"`
-	Accuracy       float64     `json:"accuracy"`
-	Rank           int         `json:"rank"`
-	Participants   int         `json:"participants"`
-	TypeBreakdown  []TypeScore `json:"type_breakdown"`
-	SubmittedAt    *time.Time  `json:"submitted_at"`
+	AttemptID       uint        `json:"attempt_id"`
+	ExamID          uint        `json:"exam_id"`
+	PaperVersionID  uint        `json:"paper_version_id"`
+	VersionNo       int         `json:"version_no"`
+	ExamTitle       string      `json:"exam_title"`
+	TotalScore      float64     `json:"total_score"`
+	ObjectiveScore  float64     `json:"objective_score"`
+	SubjectiveScore float64     `json:"subjective_score"`
+	Accuracy        float64     `json:"accuracy"`
+	Rank            int         `json:"rank"`
+	Participants    int         `json:"participants"`
+	TypeBreakdown   []TypeScore `json:"type_breakdown"`
+	SubmittedAt     *time.Time  `json:"submitted_at"`
 }
 
 // GradeListResponse lists attempts waiting for subjective grading.

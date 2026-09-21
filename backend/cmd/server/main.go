@@ -43,16 +43,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := repo.BackfillPaperVersions(ctx); err != nil {
+		logger.Error("backfill paper versions", "error", err)
+		os.Exit(1)
+	}
+
 	authService := service.NewAuthService(repo, cfg, logger)
 	userService := service.NewUserService(repo, logger)
 	questionService := service.NewQuestionService(repo, logger)
-	examService := service.NewExamService(repo, repo, logger)
-	attemptService := service.NewAttemptService(repo, repo, repo, repo, repo, logger)
+	examService := service.NewExamService(repo, repo, repo, logger)
+	attemptService := service.NewAttemptService(repo, repo, repo, repo, repo, repo, logger)
 	statsService := service.NewStatsService(repo, logger)
 	wrongService := service.NewWrongQuestionService(repo, repo, logger)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 	if err := authService.SeedAdmin(ctx); err != nil {
 		logger.Error("seed admin", "error", err)
 		os.Exit(1)

@@ -3,23 +3,29 @@ package model
 import "time"
 
 // ExamAttempt is a single student session for an exam.
+// PaperVersionID binds the attempt to the exact frozen paper snapshot it started
+// with; taking, refreshing, submitting, grading and reviewing all read that
+// version, even if the question bank or the exam's current version changes.
 type ExamAttempt struct {
-	ID             uint       `gorm:"primaryKey" json:"id"`
-	ExamID         uint       `gorm:"index;not null" json:"exam_id"`
-	StudentID      uint       `gorm:"index;not null" json:"student_id"`
-	Status         string     `gorm:"size:16;not null;default:in_progress" json:"status"`
-	StartedAt      time.Time  `json:"started_at"`
-	SubmittedAt    *time.Time `json:"submitted_at"`
-	Deadline       time.Time  `json:"deadline"`
-	QuestionOrder  string     `gorm:"type:text" json:"-"`
-	OptionOrder    string     `gorm:"type:text" json:"-"`
-	ObjectiveScore float64    `gorm:"not null;default:0" json:"objective_score"`
-	TotalScore     float64    `gorm:"not null;default:0" json:"total_score"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	ID              uint       `gorm:"primaryKey" json:"id"`
+	ExamID          uint       `gorm:"index;not null" json:"exam_id"`
+	PaperVersionID  uint       `gorm:"index;not null;default:0" json:"paper_version_id"`
+	StudentID       uint       `gorm:"index;not null" json:"student_id"`
+	Status          string     `gorm:"size:16;not null;default:in_progress" json:"status"`
+	StartedAt       time.Time  `json:"started_at"`
+	SubmittedAt     *time.Time `json:"submitted_at"`
+	Deadline        time.Time  `json:"deadline"`
+	QuestionOrder   string     `gorm:"type:text" json:"-"`
+	OptionOrder     string     `gorm:"type:text" json:"-"`
+	ObjectiveScore  float64    `gorm:"not null;default:0" json:"objective_score"`
+	TotalScore      float64    `gorm:"not null;default:0" json:"total_score"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
-// Answer is one student answer for one exam question.
+// Answer is one student answer for one frozen paper question.
+// ExamQuestionID references PaperVersionQuestion.ID (the JSON field keeps its
+// historical name for API compatibility).
 type Answer struct {
 	ID             uint       `gorm:"primaryKey" json:"id"`
 	AttemptID      uint       `gorm:"uniqueIndex:idx_attempt_question;not null" json:"attempt_id"`

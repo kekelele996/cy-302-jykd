@@ -6,9 +6,16 @@ import (
 	"strings"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/gbexam/online-exam/internal/model"
 )
+
+// clauseForUpdate returns the dialect-specific row lock clause used inside
+// snapshot transactions to serialize concurrent question/exam mutations.
+func clauseForUpdate() clause.Expression {
+	return clause.Locking{Strength: "UPDATE"}
+}
 
 // Sentinel errors returned by repositories.
 var (
@@ -28,15 +35,20 @@ func NewRepository(db *gorm.DB) *Repository {
 
 // AutoMigrate creates/updates database tables for the given models.
 func (r *Repository) AutoMigrate() error {
-	return r.db.AutoMigrate(
+	if err := r.db.AutoMigrate(
 		&model.User{},
 		&model.Question{},
 		&model.Exam{},
 		&model.ExamQuestion{},
+		&model.PaperVersion{},
+		&model.PaperVersionQuestion{},
 		&model.ExamAttempt{},
 		&model.Answer{},
 		&model.WrongQuestion{},
-	)
+	); err != nil {
+		return fmt.Errorf("auto migrate: %w", err)
+	}
+	return nil
 }
 
 // DB exposes the underlying handle for setup tasks such as seeding.

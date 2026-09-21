@@ -44,12 +44,49 @@ CREATE TABLE IF NOT EXISTS exams (
     start_time DATETIME(3) NULL,
     end_time DATETIME(3) NULL,
     status VARCHAR(16) NOT NULL DEFAULT 'draft',
+    current_version_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    revision INT UNSIGNED NOT NULL DEFAULT 0,
     created_by BIGINT UNSIGNED DEFAULT 0,
     created_at DATETIME(3) NULL,
     updated_at DATETIME(3) NULL,
     PRIMARY KEY (id),
     KEY idx_exams_status (status),
-    KEY idx_exams_created_by (created_by)
+    KEY idx_exams_created_by (created_by),
+    KEY idx_exams_current_version (current_version_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Immutable snapshot of one exam paper taken at publish/regroup time.
+CREATE TABLE IF NOT EXISTS paper_versions (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    exam_id BIGINT UNSIGNED NOT NULL,
+    version_no INT NOT NULL,
+    title VARCHAR(128) NOT NULL,
+    total_score DOUBLE NOT NULL DEFAULT 0,
+    snapshot_at DATETIME(3) NOT NULL,
+    created_by BIGINT UNSIGNED DEFAULT 0,
+    created_at DATETIME(3) NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_paper_version_no (exam_id, version_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Frozen question rows belonging to a paper_versions snapshot.
+CREATE TABLE IF NOT EXISTS paper_version_questions (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    version_id BIGINT UNSIGNED NOT NULL,
+    question_id BIGINT UNSIGNED NOT NULL,
+    type VARCHAR(16) NOT NULL,
+    content TEXT NOT NULL,
+    options TEXT,
+    answer TEXT NOT NULL,
+    analysis TEXT,
+    difficulty VARCHAR(16) NOT NULL,
+    knowledge_point VARCHAR(128) NOT NULL,
+    score DOUBLE NOT NULL,
+    sort_order INT NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_version_question_sort (version_id, sort_order),
+    KEY idx_pvq_version_id (version_id),
+    KEY idx_pvq_question_id (question_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS exam_questions (
@@ -66,6 +103,7 @@ CREATE TABLE IF NOT EXISTS exam_questions (
 CREATE TABLE IF NOT EXISTS exam_attempts (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     exam_id BIGINT UNSIGNED NOT NULL,
+    paper_version_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
     student_id BIGINT UNSIGNED NOT NULL,
     status VARCHAR(16) NOT NULL DEFAULT 'in_progress',
     started_at DATETIME(3) NULL,
@@ -79,7 +117,8 @@ CREATE TABLE IF NOT EXISTS exam_attempts (
     updated_at DATETIME(3) NULL,
     PRIMARY KEY (id),
     KEY idx_exam_attempts_exam_id (exam_id),
-    KEY idx_exam_attempts_student_id (student_id)
+    KEY idx_exam_attempts_student_id (student_id),
+    KEY idx_exam_attempts_paper_version (paper_version_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS answers (

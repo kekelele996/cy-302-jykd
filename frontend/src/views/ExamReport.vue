@@ -8,6 +8,10 @@
     <template v-if="report">
       <el-descriptions :column="3" border>
         <el-descriptions-item label="考试">{{ report.exam_title }}</el-descriptions-item>
+        <el-descriptions-item label="试卷版本">
+          <el-tag size="small" type="info">v{{ report.version_no }}</el-tag>
+          <span class="version-hint">（按组卷当时的冻结内容复核）</span>
+        </el-descriptions-item>
         <el-descriptions-item label="总分">{{ report.total_score }}</el-descriptions-item>
         <el-descriptions-item label="客观题得分">{{ report.objective_score }}</el-descriptions-item>
         <el-descriptions-item label="主观题得分">{{ report.subjective_score }}</el-descriptions-item>

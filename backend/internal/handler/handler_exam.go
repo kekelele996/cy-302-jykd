@@ -64,11 +64,48 @@ func (s *Server) PublishExam(c *gin.Context) {
 		httpx.Fail(c, http.StatusUnprocessableEntity, constants.CodeValidation, "考试 ID 不合法")
 		return
 	}
-	if err := s.exams.Publish(c.Request.Context(), middleware.Role(c), middleware.UserID(c), uint(id)); err != nil {
+	version, err := s.exams.Publish(c.Request.Context(), middleware.Role(c), middleware.UserID(c), uint(id))
+	if err != nil {
 		s.respondError(c, err)
 		return
 	}
-	httpx.OK(c, gin.H{"message": "发布成功"})
+	httpx.OK(c, gin.H{"message": "发布成功", "version": version})
+}
+
+// RegroupExam handles POST /exams/:id/regroup — re-generate paper as a new
+// immutable version while keeping old versions readable.
+func (s *Server) RegroupExam(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		httpx.Fail(c, http.StatusUnprocessableEntity, constants.CodeValidation, "考试 ID 不合法")
+		return
+	}
+	var req dto.RegroupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(c, http.StatusUnprocessableEntity, constants.CodeValidation, "请求参数不合法")
+		return
+	}
+	resp, err := s.exams.Regroup(c.Request.Context(), middleware.Role(c), middleware.UserID(c), uint(id), req)
+	if err != nil {
+		s.respondError(c, err)
+		return
+	}
+	httpx.OK(c, gin.H{"message": "已生成新版本", "version": resp})
+}
+
+// ListExamVersions handles GET /exams/:id/versions.
+func (s *Server) ListExamVersions(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		httpx.Fail(c, http.StatusUnprocessableEntity, constants.CodeValidation, "考试 ID 不合法")
+		return
+	}
+	versions, err := s.exams.ListVersions(c.Request.Context(), middleware.Role(c), middleware.UserID(c), uint(id))
+	if err != nil {
+		s.respondError(c, err)
+		return
+	}
+	httpx.OK(c, versions)
 }
 
 // CloseExam handles POST /exams/:id/close.
@@ -99,14 +136,23 @@ func (s *Server) DeleteExam(c *gin.Context) {
 	httpx.OK(c, gin.H{"message": "删除成功"})
 }
 
-// ListExamQuestions handles GET /exams/:id/questions.
+// ListExamQuestions handles GET /exams/:id/questions?version_no=N.
 func (s *Server) ListExamQuestions(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
 		httpx.Fail(c, http.StatusUnprocessableEntity, constants.CodeValidation, "考试 ID 不合法")
 		return
 	}
-	questions, err := s.exams.ListPaperQuestions(c.Request.Context(), middleware.Role(c), middleware.UserID(c), uint(id))
+	versionNo := 0
+	if raw := c.Query("version_no"); raw != "" {
+		v, parseErr := strconv.Atoi(raw)
+		if parseErr != nil || v < 0 {
+			httpx.Fail(c, http.StatusUnprocessableEntity, constants.CodeValidation, "版本号不合法")
+			return
+		}
+		versionNo = v
+	}
+	questions, err := s.exams.ListPaperQuestions(c.Request.Context(), middleware.Role(c), middleware.UserID(c), uint(id), versionNo)
 	if err != nil {
 		s.respondError(c, err)
 		return

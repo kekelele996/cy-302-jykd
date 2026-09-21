@@ -9,9 +9,12 @@ import type {
   LoginResponse,
   OverviewResponse,
   PageResult,
+  PaperVersionSummary,
   PracticeResultResponse,
   PracticeQuestion,
   Question,
+  RegroupPayload,
+  RegroupResult,
   ReportResponse,
   UserProfile,
   WrongQuestionItem
@@ -80,8 +83,15 @@ export const examApi = {
   remove(id: number) {
     return http.delete<never, { message: string }>(`/exams/${id}`)
   },
-  questions(id: number) {
-    return http.get<never, { id: number; score: number; question: Question }[]>(`/exams/${id}/questions`)
+  questions(id: number, versionNo?: number) {
+    const params = versionNo && versionNo > 0 ? { version_no: versionNo } : undefined
+    return http.get<never, { id: number; score: number; version_id?: number; version_no?: number; question: Question }[]>(`/exams/${id}/questions`, { params })
+  },
+  versions(id: number) {
+    return http.get<never, PaperVersionSummary[]>(`/exams/${id}/versions`)
+  },
+  regroup(id: number, data: RegroupPayload) {
+    return http.post<never, { message: string; version: RegroupResult }>(`/exams/${id}/regroup`, data)
   },
   stats(id: number) {
     return http.get<never, ExamStatResponse>(`/exams/${id}/stats`)

@@ -1,7 +1,10 @@
 <template>
   <div class="exam-page no-select" @contextmenu.prevent>
     <header class="exam-header">
-      <div class="exam-title">{{ paper.title }}</div>
+      <div class="exam-title">
+        {{ paper.title }}
+        <el-tag size="small" type="success" effect="dark" class="version-tag">试卷 v{{ paper.version_no }}</el-tag>
+      </div>
       <div class="exam-countdown">剩余时间：{{ countdownText }}</div>
       <el-button type="warning" @click="onSubmit">交卷</el-button>
     </header>
@@ -83,6 +86,8 @@ const examId = Number(route.params.id)
 const paper = reactive<AttemptStartResponse>({
   attempt_id: 0,
   exam_id: examId,
+  paper_version_id: 0,
+  version_no: 0,
   title: '',
   duration_minutes: 0,
   total_score: 0,
@@ -311,6 +316,10 @@ watch(currentIndex, async (idx) => {
 .exam-title {
   font-size: 18px;
   font-weight: 600;
+}
+.version-tag {
+  margin-left: 10px;
+  font-weight: 500;
 }
 .exam-countdown {
   font-size: 20px;

@@ -193,3 +193,88 @@ paths:
       responses:
         '201':
           description: 创建成功
+  /api/v1/exams/{id}/publish:
+    post:
+      summary: 发布考试（冻结当前试卷为不可变版本 v1，重复发布幂等只生效一次）
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 发布成功，data.version 为冻结版本信息
+        '409':
+          description: 并发发布冲突（仅其中一次生效）
+  /api/v1/exams/{id}/regroup:
+    post:
+      summary: 重新组卷并生成新冻结版本（旧版本保留可查，不影响进行中/历史考试）
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expected_revision, question_config]
+              properties:
+                expected_revision:
+                  type: integer
+                  description: 客户端最后看到的考试 revision，用于乐观锁
+                question_config:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type: { type: string }
+                      count: { type: integer }
+                      score: { type: number }
+                      difficulty: { type: string }
+      responses:
+        '200':
+          description: 已生成新版本
+        '409':
+          description: 试卷已被并发修改（revision 过期），本次变更不生效
+  /api/v1/exams/{id}/versions:
+    get:
+      summary: 查看考试的全部冻结试卷版本（含当前/历史标记）
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 版本列表，新到旧
+  /api/v1/exams/{id}/questions:
+    get:
+      summary: 查看试卷题目；version_no>0 读取指定历史冻结版本，缺省读取当前版本/草稿
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: version_no
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 题目列表（含冻结的题干、选项、分值、标准答案）

@@ -56,8 +56,36 @@ export interface Exam {
   end_time?: string | null
   status: 'draft' | 'published' | 'closed'
   question_count: number
+  current_version_id: number
+  current_version_no: number
+  version_count: number
+  revision: number
   created_by: number
   created_at: string
+}
+
+export interface PaperVersionSummary {
+  id: number
+  version_no: number
+  title: string
+  total_score: number
+  question_count: number
+  snapshot_at: string
+  created_by: number
+  is_current: boolean
+}
+
+export interface RegroupPayload {
+  expected_revision: number
+  question_config: PaperQuestionConfig[]
+}
+
+export interface RegroupResult {
+  version_id: number
+  version_no: number
+  revision: number
+  total_score: number
+  question_count: number
 }
 
 export interface PaperQuestionConfig {
@@ -90,6 +118,8 @@ export interface ExamQuestionView {
 export interface AttemptStartResponse {
   attempt_id: number
   exam_id: number
+  paper_version_id: number
+  version_no: number
   title: string
   duration_minutes: number
   total_score: number
@@ -101,6 +131,8 @@ export interface AttemptStartResponse {
 export interface AttemptSummary {
   attempt_id: number
   exam_id: number
+  paper_version_id: number
+  version_no: number
   exam_title: string
   status: 'in_progress' | 'submitted'
   objective_score: number
@@ -127,6 +159,8 @@ export interface AttemptQuestionDetail {
 export interface AttemptDetail {
   attempt_id: number
   exam_id: number
+  paper_version_id: number
+  version_no: number
   exam_title: string
   status: string
   objective_score: number
@@ -148,6 +182,8 @@ export interface TypeScore {
 export interface ReportResponse {
   attempt_id: number
   exam_id: number
+  paper_version_id: number
+  version_no: number
   exam_title: string
   total_score: number
   objective_score: number

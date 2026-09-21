@@ -21,31 +21,68 @@ type ExamCreateRequest struct {
 	QuestionConfig  []PaperQuestionConfig `json:"question_config" binding:"required,min=1,dive"`
 }
 
+// RegroupRequest re-generates the paper of an already published exam.
+// A new immutable version is created and the exam's current pointer moves to it;
+// in-progress attempts stay bound to their original version.
+// ExpectedRevision is the exam revision the client last saw; a stale value
+// means a concurrent change won the race and the request is rejected with 409.
+type RegroupRequest struct {
+	QuestionConfig   []PaperQuestionConfig `json:"question_config" binding:"required,min=1,dive"`
+	ExpectedRevision uint                  `json:"expected_revision" binding:"required,min=1"`
+}
+
 // ExamListQuery filters exam list.
 type ExamListQuery struct {
 	PageQuery
-	Status string `form:"status" binding:"omitempty,oneof=draft published closed"`
+	Status  string `form:"status" binding:"omitempty,oneof=draft published closed"`
 	Keyword string `form:"keyword"`
 }
 
 // ExamResponse is the paper metadata.
 type ExamResponse struct {
-	ID              uint       `json:"id"`
-	Title           string     `json:"title"`
-	Description     string     `json:"description"`
-	TotalScore      float64    `json:"total_score"`
-	DurationMinutes int        `json:"duration_minutes"`
-	StartTime       *time.Time `json:"start_time"`
-	EndTime         *time.Time `json:"end_time"`
-	Status          string     `json:"status"`
-	QuestionCount   int        `json:"question_count"`
-	CreatedBy       uint       `json:"created_by"`
-	CreatedAt       time.Time  `json:"created_at"`
+	ID               uint       `json:"id"`
+	Title            string     `json:"title"`
+	Description      string     `json:"description"`
+	TotalScore       float64    `json:"total_score"`
+	DurationMinutes  int        `json:"duration_minutes"`
+	StartTime        *time.Time `json:"start_time"`
+	EndTime          *time.Time `json:"end_time"`
+	Status           string     `json:"status"`
+	QuestionCount    int        `json:"question_count"`
+	CurrentVersionID uint       `json:"current_version_id"`
+	CurrentVersionNo int        `json:"current_version_no"`
+	VersionCount     int        `json:"version_count"`
+	Revision         uint       `json:"revision"`
+	CreatedBy        uint       `json:"created_by"`
+	CreatedAt        time.Time  `json:"created_at"`
 }
 
 // ExamQuestionResponse is one paper question (teacher/admin view includes answer).
 type ExamQuestionResponse struct {
-	ID      uint    `json:"id"`
-	Score   float64 `json:"score"`
-	Question QuestionResponse `json:"question"`
+	ID          uint             `json:"id"`
+	Score       float64          `json:"score"`
+	VersionID   uint             `json:"version_id"`
+	VersionNo   int              `json:"version_no"`
+	Question    QuestionResponse `json:"question"`
+}
+
+// PaperVersionSummary describes one frozen version in the version list.
+type PaperVersionSummary struct {
+	ID         uint      `json:"id"`
+	VersionNo  int       `json:"version_no"`
+	Title      string    `json:"title"`
+	TotalScore float64   `json:"total_score"`
+	QuestionCount int    `json:"question_count"`
+	SnapshotAt time.Time `json:"snapshot_at"`
+	CreatedBy  uint      `json:"created_by"`
+	IsCurrent  bool      `json:"is_current"`
+}
+
+// RegroupResponse is returned after a successful regroup-and-publish.
+type RegroupResponse struct {
+	VersionID   uint    `json:"version_id"`
+	VersionNo   int     `json:"version_no"`
+	Revision    uint    `json:"revision"`
+	TotalScore  float64 `json:"total_score"`
+	QuestionCount int  `json:"question_count"`
 }

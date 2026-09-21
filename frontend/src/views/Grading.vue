@@ -7,9 +7,17 @@
 
     <div class="toolbar">
       <span>选择答题记录：</span>
-      <el-select v-model="attemptId" placeholder="请选择" style="width: 320px" @change="loadDetail">
-        <el-option v-for="a in attempts" :key="a.attempt_id" :label="`#${a.attempt_id} 客观分 ${a.objective_score}`" :value="a.attempt_id" />
+      <el-select v-model="attemptId" placeholder="请选择" style="width: 380px" @change="loadDetail">
+        <el-option
+          v-for="a in attempts"
+          :key="a.attempt_id"
+          :label="`#${a.attempt_id} 客观分 ${a.objective_score} 试卷 v${a.version_no || '-'}`"
+          :value="a.attempt_id"
+        />
       </el-select>
+      <el-tag v-if="detail" type="info" effect="plain" class="version-hint">
+        当前复核：冻结版本 v{{ detail.version_no }}（题干/答案以该版本为准）
+      </el-tag>
     </div>
 
     <template v-if="detail">
@@ -97,3 +105,15 @@ onMounted(async () => {
   }
 })
 </script>
+
+<style scoped>
+.toolbar {
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.version-hint {
+  font-size: 12px;
+}
+</style>
