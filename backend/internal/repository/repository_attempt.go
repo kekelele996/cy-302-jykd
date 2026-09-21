@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/gbexam/online-exam/internal/model"
 )
@@ -53,6 +54,27 @@ func (r *Repository) FindInProgressAttempt(ctx context.Context, examID, studentI
 		return nil, wrapQuery("find in progress attempt", err)
 	}
 	return &a, nil
+}
+
+// SubmitAttemptCAS atomically transitions an attempt from in_progress to
+// submitted. It returns ErrConflict if the attempt was already submitted
+// (duplicate/concurrent submit takes effect only once).
+func (r *Repository) SubmitAttemptCAS(ctx context.Context, attemptID uint, submittedAt time.Time, objectiveTotal, total float64) error {
+	res := r.db.WithContext(ctx).Model(&model.ExamAttempt{}).
+		Where("id = ? AND status = ?", attemptID, "in_progress").
+		Updates(map[string]any{
+			"status":          "submitted",
+			"submitted_at":    submittedAt,
+			"objective_score": objectiveTotal,
+			"total_score":     total,
+		})
+	if res.Error != nil {
+		return fmt.Errorf("submit attempt cas: %w", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrConflict
+	}
+	return nil
 }
 
 // ListAttemptsByStudent returns a page of attempts for a student.

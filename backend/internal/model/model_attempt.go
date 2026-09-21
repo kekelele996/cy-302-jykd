@@ -6,6 +6,7 @@ import "time"
 type ExamAttempt struct {
 	ID             uint       `gorm:"primaryKey" json:"id"`
 	ExamID         uint       `gorm:"index;not null" json:"exam_id"`
+	VersionID      uint       `gorm:"index;not null;default:0" json:"version_id"`
 	StudentID      uint       `gorm:"index;not null" json:"student_id"`
 	Status         string     `gorm:"size:16;not null;default:in_progress" json:"status"`
 	StartedAt      time.Time  `json:"started_at"`

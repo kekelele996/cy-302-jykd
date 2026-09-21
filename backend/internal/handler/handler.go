@@ -4,10 +4,12 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/gbexam/online-exam/internal/constants"
+	"github.com/gbexam/online-exam/internal/repository"
 	"github.com/gbexam/online-exam/internal/service"
 	"github.com/gbexam/online-exam/pkg/httpx"
 )
@@ -62,7 +64,7 @@ func (s *Server) respondError(c *gin.Context, err error) {
 	case errors.Is(err, service.ErrNotFound):
 		httpx.Fail(c, http.StatusNotFound, constants.CodeNotFound, "资源不存在")
 	case errors.Is(err, service.ErrConflict):
-		httpx.Fail(c, http.StatusConflict, constants.CodeConflict, "资源冲突")
+		httpx.Fail(c, http.StatusConflict, constants.CodeConflict, conflictMessage(err))
 	case errors.Is(err, service.ErrUnauthorized):
 		httpx.Fail(c, http.StatusUnauthorized, constants.CodeUnauthorized, "认证失败")
 	case errors.Is(err, service.ErrForbidden):
@@ -75,6 +77,22 @@ func (s *Server) respondError(c *gin.Context, err error) {
 		s.logger.Error("internal error", "error", err)
 		httpx.Fail(c, http.StatusInternalServerError, constants.CodeInternal, "服务器内部错误")
 	}
+}
+
+// conflictMessage surfaces the wrapped cause of a conflict (e.g. repeated
+// publish, concurrent paper change) while keeping a generic fallback.
+func conflictMessage(err error) string {
+	msg := err.Error()
+	if msg == "" || msg == repository.ErrConflict.Error() {
+		return "资源冲突：操作仅允许生效一次"
+	}
+	// repository errors look like "conflict: 原因"; strip the sentinel prefix.
+	for _, prefix := range []string{"conflict: ", "conflict："} {
+		if strings.HasPrefix(msg, prefix) {
+			return strings.TrimPrefix(msg, prefix)
+		}
+	}
+	return msg
 }
 
 func parsePage(c *gin.Context) (int, int) {

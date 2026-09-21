@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"gorm.io/gorm"
-
 	"github.com/gbexam/online-exam/internal/model"
 )
 
@@ -54,21 +52,18 @@ func (r *Repository) UpdateExam(ctx context.Context, exam *model.Exam) error {
 	return nil
 }
 
-// DeleteExam removes an exam.
+// DeleteExam removes the exam row. Frozen versions, attempts and answers are
+// deliberately retained, so historical result reviews still render the exact
+// paper used at composition time.
 func (r *Repository) DeleteExam(ctx context.Context, id uint) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("exam_id = ?", id).Delete(&model.ExamQuestion{}).Error; err != nil {
-			return fmt.Errorf("delete exam questions: %w", err)
-		}
-		res := tx.Delete(&model.Exam{}, id)
-		if res.Error != nil {
-			return fmt.Errorf("delete exam: %w", res.Error)
-		}
-		if res.RowsAffected == 0 {
-			return ErrNotFound
-		}
-		return nil
-	})
+	res := r.db.WithContext(ctx).Delete(&model.Exam{}, id)
+	if res.Error != nil {
+		return fmt.Errorf("delete exam: %w", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // ListExams returns a filtered page of exams.
@@ -97,40 +92,6 @@ func (r *Repository) ListExams(ctx context.Context, filter ExamFilter, page, pag
 	return exams, total, nil
 }
 
-// ReplaceExamQuestions atomically replaces the paper questions for an exam.
-func (r *Repository) ReplaceExamQuestions(ctx context.Context, examID uint, items []model.ExamQuestion) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("exam_id = ?", examID).Delete(&model.ExamQuestion{}).Error; err != nil {
-			return fmt.Errorf("delete old exam questions: %w", err)
-		}
-		if len(items) == 0 {
-			return nil
-		}
-		if err := tx.Create(&items).Error; err != nil {
-			return fmt.Errorf("create exam questions: %w", err)
-		}
-		return nil
-	})
-}
-
-// ListExamQuestions returns paper questions ordered by sort order.
-func (r *Repository) ListExamQuestions(ctx context.Context, examID uint) ([]model.ExamQuestion, error) {
-	var items []model.ExamQuestion
-	if err := r.db.WithContext(ctx).Where("exam_id = ?", examID).Order("sort_order ASC").Find(&items).Error; err != nil {
-		return nil, fmt.Errorf("list exam questions: %w", err)
-	}
-	return items, nil
-}
-
-// CountExamQuestions returns the number of questions in a paper.
-func (r *Repository) CountExamQuestions(ctx context.Context, examID uint) (int64, error) {
-	var count int64
-	if err := r.db.WithContext(ctx).Model(&model.ExamQuestion{}).Where("exam_id = ?", examID).Count(&count).Error; err != nil {
-		return 0, fmt.Errorf("count exam questions: %w", err)
-	}
-	return count, nil
-}
-
 // CountExams returns the total number of exams.
 func (r *Repository) CountExams(ctx context.Context) (int64, error) {
 	var total int64
@@ -139,3 +100,5 @@ func (r *Repository) CountExams(ctx context.Context) (int64, error) {
 	}
 	return total, nil
 }
+
+// CountExams returns the total number of exams.

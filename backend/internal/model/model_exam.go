@@ -12,12 +12,15 @@ type Exam struct {
 	StartTime       *time.Time `json:"start_time"`
 	EndTime         *time.Time `json:"end_time"`
 	Status          string     `gorm:"size:16;not null;default:draft;index" json:"status"`
+	CurrentVersionID uint      `gorm:"not null;default:0" json:"current_version_id"`
 	CreatedBy       uint       `gorm:"index" json:"created_by"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
-// ExamQuestion is a question selected into an exam paper.
+// ExamQuestion is the legacy paper composition table used by schema 0001.
+// It is retained only for the one-time backfill into ExamVersion snapshots
+// (migration 0002) and is no longer read or written by business code.
 type ExamQuestion struct {
 	ID         uint    `gorm:"primaryKey" json:"id"`
 	ExamID     uint    `gorm:"index;not null" json:"exam_id"`

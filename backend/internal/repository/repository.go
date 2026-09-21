@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,8 +13,9 @@ import (
 
 // Sentinel errors returned by repositories.
 var (
-	ErrNotFound = errors.New("not found")
-	ErrConflict = errors.New("conflict")
+	ErrNotFound   = errors.New("not found")
+	ErrConflict   = errors.New("conflict")
+	ErrValidation = errors.New("validation failed")
 )
 
 // Repository provides data access for all aggregates.
@@ -32,11 +34,17 @@ func (r *Repository) AutoMigrate() error {
 		&model.User{},
 		&model.Question{},
 		&model.Exam{},
-		&model.ExamQuestion{},
+		&model.ExamVersion{},
+		&model.ExamVersionQuestion{},
 		&model.ExamAttempt{},
 		&model.Answer{},
 		&model.WrongQuestion{},
 	)
+}
+
+// InTx runs fn inside a database transaction.
+func (r *Repository) InTx(ctx context.Context, fn func(tx *gorm.DB) error) error {
+	return r.db.WithContext(ctx).Transaction(fn)
 }
 
 // DB exposes the underlying handle for setup tasks such as seeding.

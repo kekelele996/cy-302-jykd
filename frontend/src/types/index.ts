@@ -56,8 +56,29 @@ export interface Exam {
   end_time?: string | null
   status: 'draft' | 'published' | 'closed'
   question_count: number
+  current_version_id: number
+  current_version_no: number
   created_by: number
   created_at: string
+}
+
+export interface ExamVersion {
+  id: number
+  exam_id: number
+  version_no: number
+  status: 'draft' | 'published' | 'archived'
+  total_score: number
+  duration_minutes: number
+  question_count: number
+  published_at?: string | null
+  created_by: number
+  created_at: string
+}
+
+export interface VersionPaperQuestion {
+  id: number
+  score: number
+  question: Question
 }
 
 export interface PaperQuestionConfig {
@@ -90,6 +111,8 @@ export interface ExamQuestionView {
 export interface AttemptStartResponse {
   attempt_id: number
   exam_id: number
+  version_id: number
+  version_no: number
   title: string
   duration_minutes: number
   total_score: number
@@ -101,6 +124,8 @@ export interface AttemptStartResponse {
 export interface AttemptSummary {
   attempt_id: number
   exam_id: number
+  version_id: number
+  version_no: number
   exam_title: string
   status: 'in_progress' | 'submitted'
   objective_score: number
@@ -127,6 +152,8 @@ export interface AttemptQuestionDetail {
 export interface AttemptDetail {
   attempt_id: number
   exam_id: number
+  version_id: number
+  version_no: number
   exam_title: string
   status: string
   objective_score: number
@@ -148,6 +175,8 @@ export interface TypeScore {
 export interface ReportResponse {
   attempt_id: number
   exam_id: number
+  version_id: number
+  version_no: number
   exam_title: string
   total_score: number
   objective_score: number

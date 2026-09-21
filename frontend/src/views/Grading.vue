@@ -13,6 +13,13 @@
     </div>
 
     <template v-if="detail">
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        :title="`按组卷当时冻结的试卷版本 v${detail.version_no} 批改，题干、分值与标准答案与学生作答时一致。`"
+        style="margin-bottom: 12px"
+      />
       <el-table :data="subjectiveQuestions" border>
         <el-table-column prop="content" label="题干" min-width="220" show-overflow-tooltip />
         <el-table-column label="学生答案" min-width="220">

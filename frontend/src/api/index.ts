@@ -6,6 +6,7 @@ import type {
   Exam,
   ExamCreatePayload,
   ExamStatResponse,
+  ExamVersion,
   LoginResponse,
   OverviewResponse,
   PageResult,
@@ -14,6 +15,7 @@ import type {
   Question,
   ReportResponse,
   UserProfile,
+  VersionPaperQuestion,
   WrongQuestionItem
 } from '../types'
 
@@ -68,6 +70,9 @@ export const examApi = {
   create(data: ExamCreatePayload) {
     return http.post<never, Exam>('/exams', data)
   },
+  regenerate(id: number, data: ExamCreatePayload) {
+    return http.post<never, ExamVersion>(`/exams/${id}/regenerate`, data)
+  },
   get(id: number) {
     return http.get<never, Exam>(`/exams/${id}`)
   },
@@ -81,7 +86,16 @@ export const examApi = {
     return http.delete<never, { message: string }>(`/exams/${id}`)
   },
   questions(id: number) {
-    return http.get<never, { id: number; score: number; question: Question }[]>(`/exams/${id}/questions`)
+    return http.get<never, VersionPaperQuestion[]>(`/exams/${id}/questions`)
+  },
+  versions(id: number) {
+    return http.get<never, ExamVersion[]>(`/exams/${id}/versions`)
+  },
+  versionQuestions(id: number, versionNo: number) {
+    return http.get<never, VersionPaperQuestion[]>(`/exams/${id}/versions/${versionNo}/questions`)
+  },
+  discardVersion(id: number, versionNo: number) {
+    return http.delete<never, { message: string }>(`/exams/${id}/versions/${versionNo}`)
   },
   stats(id: number) {
     return http.get<never, ExamStatResponse>(`/exams/${id}/stats`)

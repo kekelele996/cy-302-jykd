@@ -193,3 +193,82 @@ paths:
       responses:
         '201':
           description: 创建成功
+
+  /api/v1/exams/{id}/regenerate:
+    post:
+      summary: 重新组卷（草稿考试替换草稿；已发布考试生成新草稿版本，发布后才生效）
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '201':
+          description: 已生成（新）草稿版本
+        '409':
+          description: 已存在待发布的草稿版本，重复/并发变更仅允许一次生效
+
+  /api/v1/exams/{id}/versions:
+    get:
+      summary: 查看考试的全部试卷版本（含历史版本）
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 版本列表（draft 待发布 / published 生效中 / archived 历史版本）
+
+  /api/v1/exams/{id}/versions/{version_no}:
+    get:
+      summary: 查看指定版本元数据
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: version_no
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 版本详情
+    delete:
+      summary: 放弃待发布的草稿版本（已发布/历史版本不可删除）
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 已放弃
+
+  /api/v1/exams/{id}/versions/{version_no}/questions:
+    get:
+      summary: 查看指定版本冻结的题目（题干、选项、分值、标准答案的快照）
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: version_no
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 该版本冻结的试卷题目

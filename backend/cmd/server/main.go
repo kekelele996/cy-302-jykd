@@ -46,13 +46,17 @@ func main() {
 	authService := service.NewAuthService(repo, cfg, logger)
 	userService := service.NewUserService(repo, logger)
 	questionService := service.NewQuestionService(repo, logger)
-	examService := service.NewExamService(repo, repo, logger)
+	examService := service.NewExamService(repo, repo, repo, logger)
 	attemptService := service.NewAttemptService(repo, repo, repo, repo, repo, logger)
-	statsService := service.NewStatsService(repo, logger)
+	statsService := service.NewStatsService(repo, repo, logger)
 	wrongService := service.NewWrongQuestionService(repo, repo, logger)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	if err := repo.BackfillLegacyVersions(ctx, logger); err != nil {
+		logger.Error("backfill frozen versions", "error", err)
+		os.Exit(1)
+	}
 	if err := authService.SeedAdmin(ctx); err != nil {
 		logger.Error("seed admin", "error", err)
 		os.Exit(1)

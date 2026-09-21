@@ -8,6 +8,12 @@
     <el-table :data="rows" v-loading="loading" border>
       <el-table-column prop="id" label="ID" width="70" />
       <el-table-column prop="title" label="考试名称" min-width="180" />
+      <el-table-column label="版本" width="90" align="center">
+        <template #default="{ row }">
+          <el-tag v-if="row.current_version_no > 0" size="small" type="success">v{{ row.current_version_no }}</el-tag>
+          <el-tag v-else size="small" type="info">草稿</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column prop="duration_minutes" label="时长(分钟)" width="100" />
       <el-table-column prop="total_score" label="总分" width="80" />
       <el-table-column prop="question_count" label="题数" width="80" />
@@ -16,15 +22,17 @@
           <el-tag :type="statusTag[row.status as keyof typeof statusTag]">{{ statusLabels[row.status as keyof typeof statusLabels] }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" min-width="300" fixed="right">
+      <el-table-column label="操作" min-width="360" fixed="right">
         <template #default="{ row }">
           <template v-if="isStudent">
             <el-button v-if="row.status === 'published'" type="primary" size="small" @click="$router.push(`/exam/${row.id}/take`)">开始考试</el-button>
           </template>
           <template v-else>
             <el-button size="small" @click="viewQuestions(row)">题目</el-button>
+            <el-button size="small" type="primary" plain @click="openRegenerate(row)">重新组卷</el-button>
             <el-button v-if="row.status === 'draft'" type="success" size="small" @click="publish(row)">发布</el-button>
             <el-button v-if="row.status === 'published'" type="warning" size="small" @click="closeExam(row)">关闭</el-button>
+            <el-button size="small" @click="viewVersions(row)">版本</el-button>
             <el-button size="small" @click="viewStats(row)">统计</el-button>
             <el-button size="small" type="info" @click="$router.push(`/grading/${row.id}`)">批改</el-button>
             <el-button size="small" type="danger" @click="removeExam(row)">删除</el-button>
@@ -42,7 +50,15 @@
       @current-change="load"
     />
 
-    <el-dialog v-model="dialogVisible" title="创建考试（自动组卷）" width="760px">
+    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="760px">
+      <el-alert
+        v-if="editing && editing.status === 'published'"
+        type="warning"
+        :closable="false"
+        show-icon
+        title="该考试已有发布版本：重新组卷会生成新的草稿版本，发布后才会生效；正在作答与历史成绩继续使用旧版本，且旧版本可随时查看。"
+        style="margin-bottom: 12px"
+      />
       <el-form :model="form" label-width="100px">
         <el-form-item label="考试名称">
           <el-input v-model="form.title" />
@@ -77,11 +93,11 @@
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="onSave">创建</el-button>
+        <el-button type="primary" :loading="saving" @click="onSave">{{ editing && editing.status === 'published' ? '生成新版本草稿' : '保存' }}</el-button>
       </template>
     </el-dialog>
 
-    <el-dialog v-model="questionsVisible" title="试卷题目" width="800px">
+    <el-dialog v-model="questionsVisible" title="当前试卷题目（发布版本快照）" width="800px">
       <el-table :data="questions" border max-height="500">
         <el-table-column type="index" label="#" width="50" />
         <el-table-column label="题型" width="90">
@@ -89,6 +105,43 @@
         </el-table-column>
         <el-table-column prop="question.content" label="题干" min-width="220" show-overflow-tooltip />
         <el-table-column prop="score" label="分值" width="70" />
+        <el-table-column prop="question.analysis" label="解析" min-width="120" show-overflow-tooltip />
+      </el-table>
+    </el-dialog>
+
+    <el-dialog v-model="versionsVisible" title="试卷版本" width="820px">
+      <el-table :data="versions" border max-height="460">
+        <el-table-column label="版本" width="80">
+          <template #default="{ row }">v{{ row.version_no }}</template>
+        </el-table-column>
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }">
+            <el-tag size="small" :type="versionTag[row.status]">{{ versionLabels[row.status] }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="question_count" label="题数" width="70" />
+        <el-table-column prop="total_score" label="总分" width="80" />
+        <el-table-column label="发布时间" width="170">
+          <template #default="{ row }">{{ row.published_at ? formatTime(row.published_at) : '—' }}</template>
+        </el-table-column>
+        <el-table-column label="操作" min-width="150">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="viewVersionQuestions(row)">查看题目</el-button>
+            <el-button v-if="row.status === 'draft'" link type="danger" @click="discardDraft(row)">放弃</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
+
+    <el-dialog v-model="versionQuestionsVisible" :title="versionQuestionsTitle" width="800px">
+      <el-table :data="versionQuestions" border max-height="520">
+        <el-table-column type="index" label="#" width="50" />
+        <el-table-column label="题型" width="90">
+          <template #default="{ row }">{{ typeLabels[row.question.type as keyof typeof typeLabels] }}</template>
+        </el-table-column>
+        <el-table-column prop="question.content" label="题干（冻结）" min-width="220" show-overflow-tooltip />
+        <el-table-column prop="score" label="分值" width="70" />
+        <el-table-column prop="question.answer" label="标准答案" min-width="100" show-overflow-tooltip />
         <el-table-column prop="question.analysis" label="解析" min-width="120" show-overflow-tooltip />
       </el-table>
     </el-dialog>
@@ -116,10 +169,11 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { examApi } from '../api'
 import { useAuthStore } from '../stores/auth'
-import type { Exam, PaperQuestionConfig, ExamStatResponse } from '../types'
+import type { Exam, ExamVersion, PaperQuestionConfig, ExamStatResponse, VersionPaperQuestion } from '../types'
 
 const typeLabels: Record<string, string> = {
   single: '单选题',
@@ -131,6 +185,8 @@ const typeLabels: Record<string, string> = {
 const difficultyLabels: Record<string, string> = { easy: '简单', medium: '中等', hard: '困难' }
 const statusLabels: Record<string, string> = { draft: '草稿', published: '已发布', closed: '已关闭' }
 const statusTag: Record<string, string> = { draft: 'info', published: 'success', closed: 'warning' }
+const versionLabels: Record<string, string> = { draft: '待发布', published: '生效中', archived: '历史版本' }
+const versionTag: Record<string, string> = { draft: 'warning', published: 'success', archived: 'info' }
 
 const auth = useAuthStore()
 const isStudent = computed(() => auth.role === 'student')
@@ -141,9 +197,16 @@ const saving = ref(false)
 const rows = ref<Exam[]>([])
 const total = ref(0)
 const dialogVisible = ref(false)
+const dialogTitle = ref('创建考试（自动组卷）')
+const editing = ref<Exam | null>(null)
 const questionsVisible = ref(false)
+const versionsVisible = ref(false)
+const versionQuestionsVisible = ref(false)
+const versionQuestionsTitle = ref('')
+const questions = ref<VersionPaperQuestion[]>([])
+const versions = ref<ExamVersion[]>([])
+const versionQuestions = ref<VersionPaperQuestion[]>([])
 const statsVisible = ref(false)
-const questions = ref<{ id: number; score: number; question: { type: string; content: string; analysis?: string } }[]>([])
 const stats = ref<ExamStatResponse | null>(null)
 const query = reactive({ page: 1, page_size: 10, status: '', keyword: '' })
 
@@ -155,11 +218,15 @@ const form = reactive({
   question_config: [] as PaperQuestionConfig[]
 })
 
+function formatTime(v?: string | null) {
+  return v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : ''
+}
+
 function addConfig() {
   form.question_config.push({ type: 'single', count: 5, score: 2, difficulty: 'easy' })
 }
 
-function openCreate() {
+function resetForm() {
   form.title = ''
   form.description = ''
   form.duration_minutes = 60
@@ -168,20 +235,42 @@ function openCreate() {
     { type: 'single', count: 5, score: 2, difficulty: 'easy' },
     { type: 'true_false', count: 5, score: 1, difficulty: 'easy' }
   ]
+}
+
+function openCreate() {
+  editing.value = null
+  dialogTitle.value = '创建考试（自动组卷）'
+  resetForm()
+  dialogVisible.value = true
+}
+
+function openRegenerate(row: Exam) {
+  editing.value = row
+  dialogTitle.value = `重新组卷：${row.title}`
+  resetForm()
+  form.title = row.title
+  form.duration_minutes = row.duration_minutes
+  form.total_score = row.total_score
   dialogVisible.value = true
 }
 
 async function onSave() {
   saving.value = true
   try {
-    await examApi.create({
+    const payload = {
       title: form.title,
       description: form.description,
       duration_minutes: form.duration_minutes,
       total_score: form.total_score,
       question_config: form.question_config
-    })
-    ElMessage.success('创建成功')
+    }
+    if (editing.value) {
+      await examApi.regenerate(editing.value.id, payload)
+      ElMessage.success(editing.value.status === 'published' ? '已生成新版本草稿，发布后生效' : '已重新组卷')
+    } else {
+      await examApi.create(payload)
+      ElMessage.success('创建成功')
+    }
     dialogVisible.value = false
     load()
   } finally {
@@ -190,9 +279,13 @@ async function onSave() {
 }
 
 async function publish(row: Exam) {
-  await examApi.publish(row.id)
-  ElMessage.success('发布成功')
-  load()
+  try {
+    await examApi.publish(row.id)
+    ElMessage.success('发布成功，试卷版本已冻结')
+    load()
+  } catch {
+    // http interceptor surfaces the conflict message
+  }
 }
 
 async function closeExam(row: Exam) {
@@ -202,7 +295,7 @@ async function closeExam(row: Exam) {
 }
 
 async function removeExam(row: Exam) {
-  await ElMessageBox.confirm('确认删除该考试？', '提示', { type: 'warning' })
+  await ElMessageBox.confirm('确认删除该考试？历史成绩与试卷版本仍会保留。', '提示', { type: 'warning' })
   await examApi.remove(row.id)
   ElMessage.success('删除成功')
   load()
@@ -211,6 +304,28 @@ async function removeExam(row: Exam) {
 async function viewQuestions(row: Exam) {
   questions.value = await examApi.questions(row.id)
   questionsVisible.value = true
+}
+
+async function viewVersions(row: Exam) {
+  editing.value = row
+  versions.value = await examApi.versions(row.id)
+  versionsVisible.value = true
+}
+
+async function viewVersionQuestions(v: ExamVersion) {
+  if (!editing.value) return
+  versionQuestions.value = await examApi.versionQuestions(editing.value.id, v.version_no)
+  versionQuestionsTitle.value = `v${v.version_no} 试卷题目（${versionLabels[v.status]}）`
+  versionQuestionsVisible.value = true
+}
+
+async function discardDraft(v: ExamVersion) {
+  if (!editing.value) return
+  await ElMessageBox.confirm(`确认放弃 v${v.version_no} 草稿版本？`, '提示', { type: 'warning' })
+  await examApi.discardVersion(editing.value.id, v.version_no)
+  ElMessage.success('草稿已放弃')
+  versions.value = await examApi.versions(editing.value.id)
+  load()
 }
 
 async function viewStats(row: Exam) {

@@ -47,7 +47,12 @@ func New(s *handler.Server, authMiddleware gin.HandlerFunc) *gin.Engine {
 				staff.POST("/questions/batch-import", s.BatchImportQuestions)
 
 				staff.POST("/exams", s.CreateExam)
+				staff.POST("/exams/:id/regenerate", s.RegenerateExam)
 				staff.GET("/exams/:id/questions", s.ListExamQuestions)
+				staff.GET("/exams/:id/versions", s.ListExamVersions)
+				staff.GET("/exams/:id/versions/:version_no", s.GetExamVersion)
+				staff.GET("/exams/:id/versions/:version_no/questions", s.ListExamVersionQuestions)
+				staff.DELETE("/exams/:id/versions/:version_no", s.DiscardExamVersion)
 				staff.GET("/exams/:id/stats", s.ExamStats)
 				staff.GET("/exams/:id/attempts", s.ListGrading)
 				staff.POST("/exams/:id/publish", s.PublishExam)

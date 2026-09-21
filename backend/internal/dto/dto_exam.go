@@ -24,28 +24,54 @@ type ExamCreateRequest struct {
 // ExamListQuery filters exam list.
 type ExamListQuery struct {
 	PageQuery
-	Status string `form:"status" binding:"omitempty,oneof=draft published closed"`
+	Status  string `form:"status" binding:"omitempty,oneof=draft published closed"`
 	Keyword string `form:"keyword"`
+}
+
+// PaperRegenerateRequest re-composes a paper. For draft exams the draft is
+// replaced; for published exams it creates a new pending version.
+type PaperRegenerateRequest struct {
+	Title           string                `json:"title" binding:"max=128"`
+	Description     string                `json:"description" binding:"max=2000"`
+	DurationMinutes int                   `json:"duration_minutes" binding:"omitempty,min=1,max=1440"`
+	TotalScore      float64               `json:"total_score" binding:"omitempty,min=0"`
+	QuestionConfig  []PaperQuestionConfig `json:"question_config" binding:"required,min=1,dive"`
 }
 
 // ExamResponse is the paper metadata.
 type ExamResponse struct {
+	ID               uint       `json:"id"`
+	Title            string     `json:"title"`
+	Description      string     `json:"description"`
+	TotalScore       float64    `json:"total_score"`
+	DurationMinutes  int        `json:"duration_minutes"`
+	StartTime        *time.Time `json:"start_time"`
+	EndTime          *time.Time `json:"end_time"`
+	Status           string     `json:"status"`
+	QuestionCount    int        `json:"question_count"`
+	CurrentVersionID uint       `json:"current_version_id"`
+	CurrentVersionNo int        `json:"current_version_no"`
+	CreatedBy        uint       `json:"created_by"`
+	CreatedAt        time.Time  `json:"created_at"`
+}
+
+// ExamVersionResponse describes one frozen paper version.
+type ExamVersionResponse struct {
 	ID              uint       `json:"id"`
-	Title           string     `json:"title"`
-	Description     string     `json:"description"`
+	ExamID          uint       `json:"exam_id"`
+	VersionNo       int        `json:"version_no"`
+	Status          string     `json:"status"`
 	TotalScore      float64    `json:"total_score"`
 	DurationMinutes int        `json:"duration_minutes"`
-	StartTime       *time.Time `json:"start_time"`
-	EndTime         *time.Time `json:"end_time"`
-	Status          string     `json:"status"`
 	QuestionCount   int        `json:"question_count"`
+	PublishedAt     *time.Time `json:"published_at"`
 	CreatedBy       uint       `json:"created_by"`
 	CreatedAt       time.Time  `json:"created_at"`
 }
 
 // ExamQuestionResponse is one paper question (teacher/admin view includes answer).
 type ExamQuestionResponse struct {
-	ID      uint    `json:"id"`
-	Score   float64 `json:"score"`
+	ID       uint             `json:"id"`
+	Score    float64          `json:"score"`
 	Question QuestionResponse `json:"question"`
 }

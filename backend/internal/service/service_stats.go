@@ -14,12 +14,13 @@ import (
 // StatsService builds dashboard and exam statistics.
 type StatsService struct {
 	baseService
-	repo StatsRepo
+	repo        StatsRepo
+	versionRepo VersionRepo
 }
 
 // NewStatsService constructs StatsService.
-func NewStatsService(repo StatsRepo, logger *slog.Logger) *StatsService {
-	return &StatsService{baseService: NewBaseService(logger), repo: repo}
+func NewStatsService(repo StatsRepo, versionRepo VersionRepo, logger *slog.Logger) *StatsService {
+	return &StatsService{baseService: NewBaseService(logger), repo: repo, versionRepo: versionRepo}
 }
 
 // Overview returns aggregate counts for the dashboard.
@@ -86,9 +87,26 @@ func (s *StatsService) ExamStats(ctx context.Context, role string, userID, examI
 		highest = submitted[0].TotalScore
 		lowest = submitted[len(submitted)-1].TotalScore
 	}
+	// Cache each frozen version's total so pass ratio is judged against the
+	// paper the student actually took, even after new versions are published.
+	versionTotals := map[uint]float64{}
+	versionTotalFor := func(a model.ExamAttempt) float64 {
+		if a.VersionID == 0 {
+			return exam.TotalScore
+		}
+		if t, ok := versionTotals[a.VersionID]; ok {
+			return t
+		}
+		t := exam.TotalScore
+		if v, err := s.versionRepo.FindVersionByID(ctx, a.VersionID); err == nil && v.TotalScore > 0 {
+			t = v.TotalScore
+		}
+		versionTotals[a.VersionID] = t
+		return t
+	}
 	for _, a := range submitted {
 		total += a.TotalScore
-		if exam.TotalScore > 0 && a.TotalScore >= exam.TotalScore*0.6 {
+		if max := versionTotalFor(a); max > 0 && a.TotalScore >= max*0.6 {
 			passCount++
 		}
 	}
@@ -97,7 +115,7 @@ func (s *StatsService) ExamStats(ctx context.Context, role string, userID, examI
 		average = total / float64(len(submitted))
 	}
 
-	buckets := buildScoreBuckets(submitted, exam.TotalScore)
+	buckets := buildScoreBuckets(submitted, versionTotals, exam.TotalScore)
 	ranking := make([]dto.RankItem, 0, len(submitted))
 	for i, a := range submitted {
 		name := ""
@@ -128,16 +146,20 @@ func (s *StatsService) ExamStats(ctx context.Context, role string, userID, examI
 	}, nil
 }
 
-func buildScoreBuckets(attempts []model.ExamAttempt, totalScore float64) []dto.ScoreBucket {
+func buildScoreBuckets(attempts []model.ExamAttempt, versionTotals map[uint]float64, fallbackTotal float64) []dto.ScoreBucket {
 	labels := []string{"0-59", "60-69", "70-79", "80-89", "90-100"}
 	buckets := make([]dto.ScoreBucket, len(labels))
 	for i, label := range labels {
 		buckets[i] = dto.ScoreBucket{Label: label, Count: 0}
 	}
 	for _, a := range attempts {
+		max := fallbackTotal
+		if t, ok := versionTotals[a.VersionID]; ok && t > 0 {
+			max = t
+		}
 		percent := 100.0
-		if totalScore > 0 {
-			percent = a.TotalScore / totalScore * 100
+		if max > 0 {
+			percent = a.TotalScore / max * 100
 		}
 		switch {
 		case percent < 60:

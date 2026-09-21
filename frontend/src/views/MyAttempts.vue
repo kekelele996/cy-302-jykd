@@ -6,6 +6,12 @@
     <el-table :data="rows" v-loading="loading" border>
       <el-table-column prop="attempt_id" label="记录 ID" width="90" />
       <el-table-column prop="exam_title" label="考试名称" min-width="180" />
+      <el-table-column label="试卷版本" width="90" align="center">
+        <template #default="{ row }">
+          <el-tag v-if="row.version_no > 0" size="small">v{{ row.version_no }}</el-tag>
+          <span v-else>—</span>
+        </template>
+      </el-table-column>
       <el-table-column label="状态" width="110">
         <template #default="{ row }">
           <el-tag :type="row.status === 'submitted' ? 'success' : 'warning'">{{ row.status === 'submitted' ? '已交卷' : '进行中' }}</el-tag>
