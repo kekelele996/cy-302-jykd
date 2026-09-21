@@ -1,0 +1,195 @@
+openapi: 3.0.3
+info:
+  title: 在线考试平台 API
+  version: 1.0.0
+  description: 在线考试平台统一采用 `/api/v1` 前缀，响应格式为 `{code,message,data}`。
+servers:
+  - url: http://localhost:19502
+    description: Docker Compose 暴露的后端端口
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    Unauthorized:
+      description: 未登录或令牌失效
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiResponse'
+    Forbidden:
+      description: 无权限
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiResponse'
+  schemas:
+    ApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          type: object
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+    RegisterRequest:
+      type: object
+      required: [username, password, name, role]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+          enum: [student, teacher]
+    Question:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [single, multiple, true_false, fill_blank, short_answer]
+        content:
+          type: string
+        options:
+          type: array
+          items:
+            type: object
+            properties:
+              key:
+                type: string
+              text:
+                type: string
+        answer: {}
+        analysis:
+          type: string
+        difficulty:
+          type: string
+          enum: [easy, medium, hard]
+        knowledge_point:
+          type: string
+        score:
+          type: number
+
+paths:
+  /healthz:
+    get:
+      summary: 健康检查
+      responses:
+        '200':
+          description: 服务正常
+  /api/v1/auth/register:
+    post:
+      summary: 注册学生或教师账号
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: 注册成功
+  /api/v1/auth/login:
+    post:
+      summary: 登录并获取 JWT
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: 登录成功，返回 token 和用户信息
+  /api/v1/questions:
+    get:
+      summary: 分页查询题库
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: type
+          schema:
+            type: string
+        - in: query
+          name: difficulty
+          schema:
+            type: string
+        - in: query
+          name: knowledge_point
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+        - in: query
+          name: page_size
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 题目列表
+    post:
+      summary: 新建题目
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Question'
+      responses:
+        '201':
+          description: 创建成功
+  /api/v1/exams:
+    post:
+      summary: 创建考试并自动组卷
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, duration_minutes, question_config]
+              properties:
+                title:
+                  type: string
+                duration_minutes:
+                  type: integer
+                total_score:
+                  type: number
+                question_config:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                      count:
+                        type: integer
+                      score:
+                        type: number
+                      difficulty:
+                        type: string
+      responses:
+        '201':
+          description: 创建成功

@@ -1,0 +1,72 @@
+name: gbexam
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: ${COMPOSE_PROJECT_NAME:-gbexam}-db
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      MYSQL_DATABASE: ${DB_NAME:-gbexam}
+      MYSQL_USER: ${DB_USER:-gbexam}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-gbexam123}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root123}
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    ports:
+      - "${DB_PORT:-57502}:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  backend:
+    build:
+      context: ./backend
+    image: ${COMPOSE_PROJECT_NAME:-gbexam}-backend:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-gbexam}-backend
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      SERVER_PORT: 8080
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: ${DB_USER:-gbexam}
+      DB_PASSWORD: ${DB_PASSWORD:-gbexam123}
+      DB_NAME: ${DB_NAME:-gbexam}
+      JWT_SECRET: ${JWT_SECRET:-change-me}
+      JWT_EXPIRE_HOURS: ${JWT_EXPIRE_HOURS:-24}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      CORS_ALLOW_ORIGIN: "*"
+      TZ: Asia/Shanghai
+    ports:
+      - "${BACKEND_PORT:-19502}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+    image: ${COMPOSE_PROJECT_NAME:-gbexam}-frontend:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-gbexam}-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-18502}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  db_data:
